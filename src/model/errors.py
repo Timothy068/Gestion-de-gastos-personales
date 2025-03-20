@@ -54,3 +54,7 @@ class CorreoYaRegistradoError(ErrorBase):
 class ContrasenaInseguraError(ErrorBase):
     """Se lanza cuando la contraseña no cumple con los requisitos mínimos"""
     pass
+
+class CorreoInvalidoError(ErrorBase):
+    """Se lanza cuando el formato del correo es inválido"""
+    pass
