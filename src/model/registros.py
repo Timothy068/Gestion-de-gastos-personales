@@ -1,14 +1,31 @@
 import re
 from src.model.errors import CorreoInvalidoError, ContrasenaInseguraError, CamposVaciosError
 
-class Registros:
-    def __init__(self, id: int, nombre: str, correo: str):
-        self.id = id
+class Registro:
+    """Gestiona el registro de cuentas de usuario."""
+
+    def __init__(self, registro_id: int, nombre: str, correo: str):
+        """
+        Inicializa los datos de registro.
+
+        Args:
+            registro_id (int): ID único del registro.
+            nombre (str): Nombre del usuario.
+            correo (str): Correo electrónico del usuario.
+        """
+        self.id = registro_id
         self.nombre = nombre
         self.correo = correo
-        self.contraseña = None
+        self.contrasena = None
 
-    def crear_cuenta(self, nombre: str, correo: str):
+    def establecer_datos_personales(self, nombre: str, correo: str):
+        """
+        Valida e ingresa nombre y correo del usuario.
+
+        Raises:
+            CamposVaciosError: Si los campos están vacíos.
+            CorreoInvalidoError: Si el formato del correo es incorrecto.
+        """
         if not nombre or not correo:
             raise CamposVaciosError("El nombre y el correo son obligatorios")
         if not re.match(r"[^@]+@[^@]+\.[^@]+", correo):
@@ -16,9 +33,16 @@ class Registros:
         self.nombre = nombre
         self.correo = correo
 
-    def crear_contraseña(self, contraseña: str):
-        if not contraseña:
+    def establecer_contrasena(self, contrasena: str):
+        """
+        Valida y asigna una contraseña segura.
+
+        Raises:
+            CamposVaciosError: Si está vacía.
+            ContrasenaInseguraError: Si tiene menos de 8 caracteres.
+        """
+        if not contrasena:
             raise CamposVaciosError("La contraseña es obligatoria")
-        if len(contraseña) < 8:
+        if len(contrasena) < 8:
             raise ContrasenaInseguraError("La contraseña debe tener al menos 8 caracteres")
-        self.contraseña = contraseña
+        self.contrasena = contrasena

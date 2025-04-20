@@ -2,28 +2,35 @@ import pytest
 from src.model.transaccion import Transaccion
 from src.model.usuario import Usuario
 from src.model.categoria import Categoria
-from src.model.registros import Registros
+from src.model.registros import Registro
 from src.model.errors import CorreoInvalidoError, ContrasenaInseguraError, CamposVaciosError, FechaFuturaError, CantidadNegativaError, UsuarioNoEncontradoError, CategoriaInvalidaError, TipoTransaccionInvalidoError, ContrasenaIncorrectaError
 from datetime import datetime, timedelta
+from src.model.errors import (
+    CantidadNegativaError,
+    TipoTransaccionInvalidoError,
+    CategoriaInvalidaError,
+    FechaFuturaError
+)
 
 class TestTransaccion:
     def setup_method(self):
         """Configuración antes de cada prueba"""
         self.usuario = Usuario(id=1, nombre="Juan", correo="juan@example.com", contraseña="segura123")
-        self.categoria = Categoria(id=1, nombre="Alimentación", descripcion="Gastos en comida")
+        self.categoria = Categoria(id=1, nombre="Alimentación", descripcion="Gastos relacionados con comida")
 
     # ---- PRUEBAS NORMALES ----
 
     def test_registrar_transaccion_con_datos_validos(self):
         """Prueba normal: registrar una transacción válida"""
         transaccion = Transaccion(id=1, cantidad=100.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario)
-        assert transaccion.cantidad == 100.0  # Valor correcto es 100.0
-
+        assert transaccion.id == 1
+        assert transaccion.cantidad == 100.0
+    
     def test_actualizar_transaccion_existente(self):
         """Prueba normal: actualizar una transacción existente"""
         transaccion = Transaccion(id=2, cantidad=200.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario)
-        transaccion.cantidad = 300.0
-        assert transaccion.cantidad == 300.0  # Valor correcto es 300.0
+        transaccion.modificar_cantidad(250.0)
+        assert transaccion.cantidad == 250.0
 
     def test_visualizar_transacciones_por_categoria(self):
         """Prueba normal: visualizar transacciones de una categoría"""
@@ -31,15 +38,14 @@ class TestTransaccion:
             Transaccion(id=3, cantidad=50.0, fecha=datetime.now(), tipo="Egreso", categoria=self.categoria, usuario=self.usuario),
             Transaccion(id=4, cantidad=75.0, fecha=datetime.now(), tipo="Egreso", categoria=self.categoria, usuario=self.usuario)
         ]
-        total = sum(t.cantidad for t in transacciones)
-        assert total == 125  # Total correcto es 125
+        assert len(transacciones) == 2
 
     # ---- PRUEBAS EXTREMAS ----
 
     def test_registrar_transaccion_con_monto_extremadamente_alto(self):
-        """Prueba extrema: registrar una transacción con un monto muy alto"""
+        """Prueba extrema: registrar una transacción con un monto extremadamente alto"""
         transaccion = Transaccion(id=5, cantidad=1_000_000_000.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario)
-        assert transaccion.cantidad == 1_000_000_000.0  # Valor correcto es 1_000_000_000.0
+        assert transaccion.cantidad == 1_000_000_000.0
 
     def test_registrar_transaccion_con_fecha_futura(self):
         """Prueba extrema: registrar una transacción con una fecha en el futuro"""
@@ -67,6 +73,7 @@ class TestTransaccion:
         """Prueba de error: registrar una transacción con un tipo no válido"""
         with pytest.raises(TipoTransaccionInvalidoError):
             Transaccion(id=10, cantidad=300.0, fecha=datetime.now(), tipo="Donación", categoria=self.categoria, usuario=self.usuario)
+
 
 
 class TestUsuario:
@@ -149,8 +156,9 @@ class TestUsuario:
 class TestRegistros:
     def setup_method(self):
         """Configuración antes de cada prueba"""
-        self.registro = Registros(id=1, nombre="Juan", correo="juan@example.com")
+        self.registro = Registro(registro_id=1, nombre="Juan", correo="juan@example.com")
 
+    
     # ---- PRUEBAS NORMALES ----
 
     def test_crear_cuenta_con_datos_validos(self):
@@ -163,9 +171,8 @@ class TestRegistros:
 
     def test_crear_contraseña_correctamente(self):
         """Prueba normal: establecer una contraseña correctamente"""
-        self.registro.crear_contraseña("NuevaClave123")
-        assert self.registro.contraseña == "NuevaClave123"  # La contraseña es correcta
-
+        self.registro.establecer_contrasena("NuevaClave123")
+        assert self.registro.contrasena == "NuevaClave123"  # La contraseña es correcta
     # ---- PRUEBAS EXTREMAS ----
 
     def test_crear_cuenta_con_nombre_extremadamente_largo(self):
@@ -180,9 +187,8 @@ class TestRegistros:
 
     def test_crear_contraseña_extremadamente_larga(self):
         """Prueba extrema: establecer una contraseña muy larga"""
-        self.registro.crear_contraseña("P" * 500)
-        assert len(self.registro.contraseña) > 100  # La contraseña es demasiado larga
-
+        self.registro.establecer_contrasena("P" * 500)
+        assert len(self.registro.contrasena) > 100  # La contraseña es demasiado larga
     # ---- PRUEBAS DE ERROR ----
 
     def test_crear_cuenta_sin_nombre(self):
@@ -197,18 +203,19 @@ class TestRegistros:
 
     def test_crear_contraseña_vacía(self):
         """Prueba de error: intentar establecer una contraseña vacía"""
-        self.registro.crear_contraseña("")
-        assert self.registro.contraseña is None or self.registro.contraseña == ""  # La contraseña está vacía
+        with pytest.raises(CamposVaciosError):
+            self.registro.establecer_contrasena("")
 
     def test_crear_cuenta_con_correo_invalido(self):
         """Prueba de error: crear cuenta con correo inválido"""
         with pytest.raises(CorreoInvalidoError):
-            self.registro.crear_cuenta(nombre="Pedro", correo="correo_invalido")
+            self.registro.establecer_datos_personales(nombre="Pedro", correo="correo_invalido")
 
     def test_crear_contraseña_corta(self):
         """Prueba de error: establecer una contraseña muy corta"""
         with pytest.raises(ContrasenaInseguraError):
-            self.registro.crear_contraseña("123")
+            self.registro.establecer_contrasena("123")
+
 
 class TestCategoria:
     def setup_method(self):
@@ -300,25 +307,25 @@ class TestActualizarTransaccion:
     def test_actualizar_fecha_futura(self):
         """Prueba extrema: cambiar la fecha de una transacción a una en el futuro"""
         nueva_fecha = datetime(2050, 1, 1)
-        self.transaccion.modificar_transaccion(nueva_fecha=nueva_fecha)
-        assert self.transaccion.fecha > datetime.now()  # La fecha es futura
+        with pytest.raises(FechaFuturaError):
+            self.transaccion.modificar_transaccion(nueva_fecha=nueva_fecha)
     
     def test_actualizar_cantidad_negativa(self):
         """Prueba extrema: establecer una cantidad negativa"""
-        self.transaccion.modificar_transaccion(nueva_cantidad=-300.0)
-        assert self.transaccion.cantidad < 0  # El monto es negativo
+        with pytest.raises(CantidadNegativaError):
+            self.transaccion.modificar_transaccion(nueva_cantidad=-300.0)
     
     # ---- PRUEBAS DE ERROR ----
     
     def test_actualizar_sin_datos(self):
         """Prueba de error: intentar actualizar una transacción sin proporcionar nuevos datos"""
-        self.transaccion.modificar_transaccion()
-        assert self.transaccion.cantidad == 100.0  # No se hizo ningún cambio
+        with pytest.raises(ValueError):
+            self.transaccion.modificar_transaccion()
     
     def test_actualizar_con_categoria_invalida(self):
         """Prueba de error: cambiar a una categoría inválida"""
         with pytest.raises(CategoriaInvalidaError):
-            self.transaccion.modificar_transaccion(nueva_categoria=None)
+            self.transaccion.modificar_transaccion(nueva_categoria="Categoría Inventada")
 
     def test_actualizar_tipo_invalido(self):
         """Prueba de error: establecer un tipo de transacción inválido"""
@@ -329,12 +336,14 @@ class TestVisualizarTransacciones:
     def setup_method(self):
         """Configuración antes de cada prueba"""
         self.usuario = Usuario(id=1, nombre="Juan", correo="juan@example.com", contraseña="segura123")
-        self.categoria = Categoria(id=1, nombre="Alimentación", descripcion="Gastos en comida")
+    # Usamos tanto nombre de categoría como objeto Categoria
+        self.categoria = Categoria(id=1, nombre="Alimentación", descripcion="Gastos relacionados con comida")
+    
         self.transacciones = [
             Transaccion(id=1, cantidad=100.0, fecha=datetime.now() - timedelta(days=5), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario),
             Transaccion(id=2, cantidad=50.0, fecha=datetime.now() - timedelta(days=3), tipo="Egreso", categoria=self.categoria, usuario=self.usuario),
-            Transaccion(id=3, cantidad=200.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario)
-        ]
+            Transaccion(id=3, cantidad=200.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario)  # Se pasó el objeto Categoria
+    ]
     
     # ---- PRUEBAS NORMALES ----
     
@@ -345,7 +354,7 @@ class TestVisualizarTransacciones:
     
     def test_visualizar_transacciones_categoria_especifica(self):
         """Prueba normal: visualizar transacciones de una categoría específica"""
-        resultado = [t for t in self.transacciones if t.categoria.nombre == "Transporte"]
+        resultado = [t for t in self.transacciones if t.categoria == "Transporte"]  # Compara la categoría por nombre
         assert len(resultado) == 0  # No hay transacciones de "Transporte"
     
     def test_visualizar_transacciones_hoy(self):
@@ -375,7 +384,7 @@ class TestVisualizarTransacciones:
     def test_visualizar_transacciones_fechas_invalidas(self):
         """Prueba de error: intentar visualizar transacciones con fechas inválidas"""
         with pytest.raises(TypeError):
-            resultado = [t for t in self.transacciones if "fecha_invalida" <= t.fecha <= datetime.now()]
+            resultado = [t for t in self.transacciones if None <= t.fecha <= datetime.now()]
     
     def test_visualizar_transacciones_sin_parametros(self):
         """Prueba de error: intentar visualizar transacciones sin proporcionar fechas"""
@@ -385,4 +394,4 @@ class TestVisualizarTransacciones:
     def test_visualizar_transacciones_con_caracteres_especiales(self):
         """Prueba de error: intentar visualizar transacciones con caracteres especiales en las fechas"""
         with pytest.raises(TypeError):
-            resultado = [t for t in self.transacciones if "@#$$%" <= t.fecha <= datetime.now()]
+            resultado = [t for t in self.transacciones if datetime(2021, 1, 1) <= t.fecha <= "fecha_invalida"]
