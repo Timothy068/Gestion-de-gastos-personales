@@ -234,7 +234,7 @@ class TestCategoria:
     # ---- PRUEBAS EXTREMAS ----
 
     def test_crear_categoria_con_nombre_extremadamente_largo(self):
-        """Prueba extrema: crear una categoría con un nombre muy largo"""
+        """Prueba extrema: crear una categoría con un nombre muy largoo"""
         with pytest.raises(ValueError):
             Categoria(id=1, nombre="X" * 300, descripcion="Gastos en comida")
 
