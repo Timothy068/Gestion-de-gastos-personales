@@ -1,7 +1,11 @@
 import pytest
 from src.model.transaccion import Transaccion
+from unittest.mock import MagicMock
+from sqlalchemy import create_engine
+from src.model.base import Base  # Importa Base desde base.py
+from sqlalchemy.orm import sessionmaker
 from src.model.usuario import Usuario
-from src.model.categoria import Categoria
+from src.model.categoria import Categoria, TipoCategoria
 from src.model.registros import Registro
 from src.model.errors import CorreoInvalidoError, ContrasenaInseguraError, CamposVaciosError, FechaFuturaError, CantidadNegativaError, UsuarioNoEncontradoError, CategoriaInvalidaError, TipoTransaccionInvalidoError, ContrasenaIncorrectaError
 from datetime import datetime, timedelta
@@ -15,66 +19,134 @@ from src.model.errors import (
 class TestTransaccion:
     def setup_method(self):
         """Configuración antes de cada prueba"""
-        self.usuario = Usuario(id=1, nombre="Juan", correo="juan@example.com", contraseña="segura123")
-        self.categoria = Categoria(id=1, nombre="Alimentación", descripcion="Gastos relacionados con comida")
+        engine = create_engine('sqlite:///:memory:')
+        Base.metadata.create_all(bind=engine)
+        TestingSessionLocal = sessionmaker(bind=engine)
+        self.session = TestingSessionLocal()
 
-    # ---- PRUEBAS NORMALES ----
+        self.usuario = Usuario(nombre="Juan", correo="juan@example.com", contraseña="segura123")
+        self.categoria = Categoria(
+            nombre="Alimentación",
+            tipo="Egreso",  # Aseguramos que el tipo esté capitalizado
+            descripcion="Gastos relacionados con comida"
+        )
+
+        self.session.add_all([self.usuario, self.categoria])
+        self.session.commit()
+
+    def teardown_method(self):
+        self.session.close()
 
     def test_registrar_transaccion_con_datos_validos(self):
-        """Prueba normal: registrar una transacción válida"""
-        transaccion = Transaccion(id=1, cantidad=100.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario)
-        assert transaccion.id == 1
-        assert transaccion.cantidad == 100.0
-    
+        transaccion = Transaccion(
+            cantidad=100.0,
+            fecha=datetime.now(),
+            tipo="Egreso",
+            categoria=self.categoria,
+            usuario=self.usuario,
+            session=self.session
+        )
+        self.session.add(transaccion)
+        self.session.commit()
+
+        t_db = self.session.query(Transaccion).filter_by(id=transaccion.id).first()
+        assert t_db is not None
+        assert t_db.cantidad == 100.0
+
     def test_actualizar_transaccion_existente(self):
-        """Prueba normal: actualizar una transacción existente"""
-        transaccion = Transaccion(id=2, cantidad=200.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario)
+        transaccion = Transaccion(
+            cantidad=200.0,
+            fecha=datetime.now(),
+            tipo="Egreso",
+            categoria=self.categoria,
+            usuario=self.usuario,
+            session=self.session
+        )
+        self.session.add(transaccion)
+        self.session.commit()
+
         transaccion.modificar_cantidad(250.0)
-        assert transaccion.cantidad == 250.0
+        self.session.commit()
+
+        t_db = self.session.query(Transaccion).filter_by(id=transaccion.id).first()
+        assert t_db.cantidad == 250.0
 
     def test_visualizar_transacciones_por_categoria(self):
-        """Prueba normal: visualizar transacciones de una categoría"""
-        transacciones = [
-            Transaccion(id=3, cantidad=50.0, fecha=datetime.now(), tipo="Egreso", categoria=self.categoria, usuario=self.usuario),
-            Transaccion(id=4, cantidad=75.0, fecha=datetime.now(), tipo="Egreso", categoria=self.categoria, usuario=self.usuario)
-        ]
+        t1 = Transaccion(50.0, datetime.now(), "Egreso", self.categoria, self.usuario, self.session)
+        t2 = Transaccion(75.0, datetime.now(), "Egreso", self.categoria, self.usuario, self.session)
+        self.session.add_all([t1, t2])
+        self.session.commit()
+
+        transacciones = self.session.query(Transaccion).filter_by(categoria_id=self.categoria.id).all()
         assert len(transacciones) == 2
 
-    # ---- PRUEBAS EXTREMAS ----
-
     def test_registrar_transaccion_con_monto_extremadamente_alto(self):
-        """Prueba extrema: registrar una transacción con un monto extremadamente alto"""
-        transaccion = Transaccion(id=5, cantidad=1_000_000_000.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario)
+        transaccion = Transaccion(
+            cantidad=1_000_000_000.0,
+            fecha=datetime.now(),
+            tipo="Egreso",
+            categoria=self.categoria,
+            usuario=self.usuario,
+            session=self.session
+        )
+        self.session.add(transaccion)
+        self.session.commit()
         assert transaccion.cantidad == 1_000_000_000.0
 
     def test_registrar_transaccion_con_fecha_futura(self):
-        """Prueba extrema: registrar una transacción con una fecha en el futuro"""
-        with pytest.raises(FechaFuturaError):
-            Transaccion(id=6, cantidad=200.0, fecha=datetime.now() + timedelta(days=365), tipo="Egreso", categoria=self.categoria, usuario=self.usuario)
+        with pytest.raises(ValueError, match="La fecha no puede ser futura"):
+            Transaccion(
+                cantidad=200.0,
+                fecha=datetime.now() + timedelta(days=365),
+                tipo="Egreso",
+                categoria=self.categoria,
+                usuario=self.usuario,
+                session=self.session
+            )
 
     def test_registrar_transaccion_con_monto_negativo(self):
-        """Prueba extrema: registrar una transacción con un monto negativo"""
-        with pytest.raises(CantidadNegativaError):
-            Transaccion(id=7, cantidad=-500.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario)
-
-    # ---- PRUEBAS DE ERROR ----
+        with pytest.raises(ValueError, match="El monto de la transacción no puede ser negativo"):
+            Transaccion(
+                cantidad=-500.0,
+                fecha=datetime.now(),
+                tipo="Egreso",
+                categoria=self.categoria,
+                usuario=self.usuario,
+                session=self.session
+            )
 
     def test_registrar_transaccion_sin_usuario(self):
-        """Prueba de error: registrar una transacción sin usuario"""
-        with pytest.raises(UsuarioNoEncontradoError):
-            Transaccion(id=8, cantidad=100.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=None)
+        with pytest.raises(ValueError, match="Usuario no válido"):
+            Transaccion(
+                cantidad=100.0,
+                fecha=datetime.now(),
+                tipo="Egreso",
+                categoria=self.categoria,
+                usuario=None,
+                session=self.session
+            )
 
     def test_registrar_transaccion_sin_categoria(self):
-        """Prueba de error: registrar una transacción sin categoría"""
-        with pytest.raises(CategoriaInvalidaError):
-            Transaccion(id=9, cantidad=50.0, fecha=datetime.now(), tipo="Egreso", categoria=None, usuario=self.usuario)
+        with pytest.raises(ValueError):
+            Transaccion(
+                cantidad=50.0,
+                fecha=datetime.now(),
+                tipo="Egreso",
+                categoria=None,
+                usuario=self.usuario,
+                session=self.session
+            )
 
     def test_registrar_transaccion_con_tipo_invalido(self):
-        """Prueba de error: registrar una transacción con un tipo no válido"""
-        with pytest.raises(TipoTransaccionInvalidoError):
-            Transaccion(id=10, cantidad=300.0, fecha=datetime.now(), tipo="Donación", categoria=self.categoria, usuario=self.usuario)
-
-
+        with pytest.raises(ValueError, match="Tipo debe ser 'Ingreso' o 'Egreso'"):
+            Transaccion(
+                cantidad=300.0,
+                fecha=datetime.now(),
+                tipo="Donación",
+                categoria=self.categoria,
+                usuario=self.usuario,
+                session=self.session
+            )
 
 class TestUsuario:
     def setup_method(self):
@@ -155,8 +227,12 @@ class TestUsuario:
 
 class TestRegistros:
     def setup_method(self):
-        """Configuración antes de cada prueba"""
-        self.registro = Registro(registro_id=1, nombre="Juan", correo="juan@example.com")
+        self.registro = Registro(
+            id=1,
+            nombre="Juan",
+            correo="juan@example.com",
+            contrasena="segura123"  # contraseña válida para pasar la validación
+        )
 
     
     # ---- PRUEBAS NORMALES ----
@@ -274,54 +350,102 @@ class TestCategoria:
 
 class TestActualizarTransaccion:
     def setup_method(self):
-        """Configuración antes de cada prueba"""
-        self.usuario = Usuario(id=1, nombre="Juan", correo="juan@example.com", contraseña="segura123")
-        self.categoria = Categoria(id=1, nombre="Alimentación", descripcion="Gastos en comida")
-        self.transaccion = Transaccion(id=1, cantidad=100.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario)
+        engine = create_engine('sqlite:///:memory:')
+        Base.metadata.create_all(engine)
+        TestingSessionLocal = sessionmaker(bind=engine)
+        self.session = TestingSessionLocal()
+
+        self.usuario = Usuario(nombre="Juan", correo="juan@example.com", contraseña="segura123")
+        self.session.add(self.usuario)
+        self.session.commit()
+
+        from src.model.categoria import TipoCategoria
+        self.categoria = Categoria(
+            nombre="Salario",
+            tipo=TipoCategoria.INGRESO,
+            descripcion="Pago mensual"
+        )
+        self.session.add(self.categoria)
+        self.session.commit()
+
+    # Recargar para asegurarse que es la misma instancia que en la DB
+        self.categoria = self.session.query(Categoria).filter_by(nombre="Salario").first()
+
+        self.transaccion = Transaccion(
+            id=1,
+            cantidad=100.0,
+            fecha=datetime.now(),
+            tipo="Ingreso",   # Aquí puede seguir siendo string, pues tu validación en Transaccion lo maneja
+            categoria=self.categoria,
+            usuario=self.usuario,
+            session=self.session
+    )
+
+
 
     # ---- PRUEBAS NORMALES ----
-    
+
     def test_actualizar_cantidad_valida(self):
         """Prueba normal: actualizar la cantidad de una transacción con un valor válido"""
         self.transaccion.modificar_transaccion(nueva_cantidad=200.0)
-        assert self.transaccion.cantidad == 200.0  # Valor correcto es 200.0
+        assert self.transaccion.cantidad == 200.0
 
     def test_actualizar_categoria_valida(self):
         """Prueba normal: actualizar la categoría de una transacción"""
-        nueva_categoria = Categoria(id=2, nombre="Transporte", descripcion="Gastos en transporte")
+        nueva_categoria = Categoria(
+            id=2,
+            nombre="Venta",
+            tipo="Ingreso",  # Debe coincidir con el tipo de transacción
+            descripcion="Ingreso por ventas"
+        )
+        self.session.add(nueva_categoria)
+        self.session.commit()
+
         self.transaccion.modificar_transaccion(nueva_categoria=nueva_categoria)
-        assert self.transaccion.categoria.nombre == "Transporte"  # Valor correcto es "Transporte"
+        assert self.transaccion.categoria.nombre == "Venta"
 
     def test_actualizar_tipo_transaccion(self):
         """Prueba normal: cambiar el tipo de una transacción"""
-        self.transaccion.modificar_transaccion(nuevo_tipo="Egreso")
-        assert self.transaccion.tipo == "Egreso"  # Valor correcto es "Egreso"
-    
+        # Crear una categoría válida para egreso
+        nueva_categoria = Categoria(
+            id=3,
+            nombre="Alimentación",
+            tipo="Egreso",
+            descripcion="Gastos de comida"
+        )
+        self.session.add(nueva_categoria)
+        self.session.commit()
+
+        # Cambiar tipo y categoría al mismo tiempo
+        self.transaccion.modificar_transaccion(nuevo_tipo="Egreso", nueva_categoria=nueva_categoria)
+        assert self.transaccion.tipo == "Egreso"
+        assert self.transaccion.categoria.nombre == "Alimentación"
+
     # ---- PRUEBAS EXTREMAS ----
-    
+
     def test_actualizar_cantidad_extremadamente_alta(self):
         """Prueba extrema: actualizar una transacción con una cantidad muy alta"""
         self.transaccion.modificar_transaccion(nueva_cantidad=1_000_000_000.0)
-        assert self.transaccion.cantidad == 1_000_000_000.0  # Valor correcto es 1_000_000_000.0
-    
+        assert self.transaccion.cantidad == 1_000_000_000.0
+
     def test_actualizar_fecha_futura(self):
         """Prueba extrema: cambiar la fecha de una transacción a una en el futuro"""
         nueva_fecha = datetime(2050, 1, 1)
         with pytest.raises(FechaFuturaError):
             self.transaccion.modificar_transaccion(nueva_fecha=nueva_fecha)
-    
+
     def test_actualizar_cantidad_negativa(self):
         """Prueba extrema: establecer una cantidad negativa"""
         with pytest.raises(CantidadNegativaError):
             self.transaccion.modificar_transaccion(nueva_cantidad=-300.0)
-    
+
     # ---- PRUEBAS DE ERROR ----
-    
+
     def test_actualizar_sin_datos(self):
         """Prueba de error: intentar actualizar una transacción sin proporcionar nuevos datos"""
         with pytest.raises(ValueError):
             self.transaccion.modificar_transaccion()
-    
+
     def test_actualizar_con_categoria_invalida(self):
         """Prueba de error: cambiar a una categoría inválida"""
         with pytest.raises(CategoriaInvalidaError):
@@ -334,50 +458,59 @@ class TestActualizarTransaccion:
 
 class TestVisualizarTransacciones:
     def setup_method(self):
-        """Configuración antes de cada prueba"""
         self.usuario = Usuario(id=1, nombre="Juan", correo="juan@example.com", contraseña="segura123")
-    # Usamos tanto nombre de categoría como objeto Categoria
-        self.categoria = Categoria(id=1, nombre="Alimentación", descripcion="Gastos relacionados con comida")
-    
+        self.categoria = Categoria(id=1, nombre="Alimentación", descripcion="Gastos relacionados con comida", tipo="Ingreso")
+
+    # Creamos el mock para session
+        self.mock_session = MagicMock()
+
+    # Mockear el query para que filtre y devuelva la categoría que queremos
+        query_mock = MagicMock()
+        filter_mock = MagicMock()
+        filter_mock.all.return_value = [self.categoria]  # La lista que se retorna al llamar all()
+        query_mock.filter.return_value = filter_mock
+        self.mock_session.query.return_value = query_mock
+
         self.transacciones = [
-            Transaccion(id=1, cantidad=100.0, fecha=datetime.now() - timedelta(days=5), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario),
-            Transaccion(id=2, cantidad=50.0, fecha=datetime.now() - timedelta(days=3), tipo="Egreso", categoria=self.categoria, usuario=self.usuario),
-            Transaccion(id=3, cantidad=200.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario)  # Se pasó el objeto Categoria
-    ]
+            Transaccion(id=1, cantidad=100.0, fecha=datetime.now() - timedelta(days=5), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario, session=self.mock_session),
+            Transaccion(id=2, cantidad=50.0, fecha=datetime.now() - timedelta(days=3), tipo="Egreso", categoria=self.categoria, usuario=self.usuario, session=self.mock_session),
+            Transaccion(id=3, cantidad=200.0, fecha=datetime.now(), tipo="Ingreso", categoria=self.categoria, usuario=self.usuario, session=self.mock_session)
+        ]
     
     # ---- PRUEBAS NORMALES ----
     
     def test_visualizar_transacciones_en_rango_valido(self):
         """Prueba normal: visualizar transacciones dentro de un rango de fechas válido"""
         resultado = [t for t in self.transacciones if datetime.now() - timedelta(days=10) <= t.fecha <= datetime.now()]
-        assert len(resultado) == 3  # El resultado correcto es 3
+        assert len(resultado) == 3
     
     def test_visualizar_transacciones_categoria_especifica(self):
         """Prueba normal: visualizar transacciones de una categoría específica"""
-        resultado = [t for t in self.transacciones if t.categoria == "Transporte"]  # Compara la categoría por nombre
-        assert len(resultado) == 0  # No hay transacciones de "Transporte"
+        # Aquí comparas el nombre de la categoría
+        resultado = [t for t in self.transacciones if t.categoria.nombre == "Transporte"]
+        assert len(resultado) == 0
     
     def test_visualizar_transacciones_hoy(self):
         """Prueba normal: visualizar transacciones registradas hoy"""
         resultado = [t for t in self.transacciones if t.fecha.date() == datetime.now().date()]
-        assert len(resultado) == 1  # Solo hay 1 transacción hoy
+        assert len(resultado) == 1
     
     # ---- PRUEBAS EXTREMAS ----
     
     def test_visualizar_transacciones_rango_extremadamente_amplio(self):
         """Prueba extrema: visualizar transacciones en un rango de fechas muy amplio"""
         resultado = [t for t in self.transacciones if datetime(2000, 1, 1) <= t.fecha <= datetime(2100, 12, 31)]
-        assert len(resultado) == 3  # Hay transacciones en ese rango
+        assert len(resultado) == 3
     
     def test_visualizar_transacciones_solo_un_dia(self):
         """Prueba extrema: visualizar transacciones de un solo día específico"""
         resultado = [t for t in self.transacciones if t.fecha.date() == (datetime.now() - timedelta(days=3)).date()]
-        assert len(resultado) == 1  # Hay una transacción en ese día
+        assert len(resultado) == 1
     
     def test_visualizar_transacciones_fechas_invertidas(self):
         """Prueba extrema: intentar visualizar transacciones con fechas invertidas"""
         resultado = [t for t in self.transacciones if datetime.now() <= t.fecha <= datetime.now() - timedelta(days=10)]
-        assert len(resultado) == 0  # El rango de fechas es incorrecto
+        assert len(resultado) == 0
     
     # ---- PRUEBAS DE ERROR ----
     

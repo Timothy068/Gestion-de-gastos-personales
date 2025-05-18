@@ -3,25 +3,30 @@ from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.gridlayout import GridLayout
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.spinner import Spinner
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from src.model.usuario import Usuario
 from src.model.categoria import Categoria
 from src.model.transaccion import Transaccion
-from src.model.registros import Registro
 from src.model.errors import ContrasenaIncorrectaError, CorreoInvalidoError
 from src.model.sesion import Sesion
 
+from src.model.db import SessionLocal
+
+
 class MenuApp(App):
     def build(self):
-        self.transacciones = []  # almacenamiento en memoria
         self.root = BoxLayout(orientation='vertical', padding=20, spacing=10)
 
-        self.title_label = Label(text="Gestor de Gastos Personales", font_size=30, bold=True, color=(0.1, 0.6, 0.1, 1))
+        self.title_label = Label(
+            text="Gestor de Gastos Personales",
+            font_size=30,
+            bold=True,
+            color=(0.1, 0.6, 0.1, 1)
+        )
         self.root.add_widget(self.title_label)
 
         self.boton_crear_usuario = Button(text="Crear Usuario", size_hint_y=None, height=50)
@@ -51,6 +56,8 @@ class MenuApp(App):
         self.usuario_label = Label(text="Usuario en sesión: Ninguno", font_size=14)
         self.root.add_widget(self.usuario_label)
 
+        self.actualizar_usuario_label()
+
         return self.root
 
     def actualizar_usuario_label(self):
@@ -59,7 +66,10 @@ class MenuApp(App):
 
     def crear_usuario(self, instance):
         layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
-        nombre_input, correo_input, contrasena_input = TextInput(), TextInput(), TextInput(password=True)
+        nombre_input = TextInput()
+        correo_input = TextInput()
+        contrasena_input = TextInput(password=True)
+
         layout.add_widget(Label(text="Nombre:"))
         layout.add_widget(nombre_input)
         layout.add_widget(Label(text="Correo:"))
@@ -68,15 +78,31 @@ class MenuApp(App):
         layout.add_widget(contrasena_input)
 
         def on_submit(_):
+            db = SessionLocal()
             try:
-                usuario = Usuario(id=len(self.transacciones)+1, nombre=nombre_input.text, correo=correo_input.text, contraseña=contrasena_input.text)
-                Sesion.iniciar_sesion(usuario)
+                # Validar que correo no exista
+                existe = db.query(Usuario).filter(Usuario.correo == correo_input.text).first()
+                if existe:
+                    raise CorreoInvalidoError("El correo ya está registrado.")
+                nuevo_usuario = Usuario(
+                    nombre=nombre_input.text,
+                    correo=correo_input.text,
+                    contraseña=contrasena_input.text
+                )
+                db.add(nuevo_usuario)
+                db.commit()
+                db.refresh(nuevo_usuario)
+
+                Sesion.iniciar_sesion(nuevo_usuario)
                 popup.dismiss()
                 self.actualizar_usuario_label()
                 self.mostrar_popup("Usuario creado exitosamente.")
             except CorreoInvalidoError as e:
-                popup.dismiss()
                 self.mostrar_popup(str(e))
+            except Exception as e:
+                self.mostrar_popup(f"Error: {str(e)}")
+            finally:
+                db.close()
 
         submit_button = Button(text="Crear Usuario", size_hint_y=None, height=50)
         submit_button.bind(on_press=on_submit)
@@ -87,23 +113,30 @@ class MenuApp(App):
 
     def iniciar_sesion(self, instance):
         layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
-        correo_input, contrasena_input = TextInput(), TextInput(password=True)
+        correo_input = TextInput()
+        contrasena_input = TextInput(password=True)
+
         layout.add_widget(Label(text="Correo:"))
         layout.add_widget(correo_input)
         layout.add_widget(Label(text="Contraseña:"))
         layout.add_widget(contrasena_input)
 
         def on_submit(_):
+            db = SessionLocal()
             try:
-                usuario = Usuario(id=1, nombre="Usuario", correo=correo_input.text, contraseña=contrasena_input.text)
-                usuario.iniciar_sesion(correo_input.text, contrasena_input.text)
+                usuario = db.query(Usuario).filter(Usuario.correo == correo_input.text).first()
+                if not usuario or usuario.contraseña != contrasena_input.text:
+                    raise ContrasenaIncorrectaError()
                 Sesion.iniciar_sesion(usuario)
                 popup.dismiss()
                 self.actualizar_usuario_label()
                 self.mostrar_popup("Inicio de sesión exitoso.")
             except ContrasenaIncorrectaError:
-                popup.dismiss()
                 self.mostrar_popup("Correo o contraseña incorrectos.")
+            except Exception as e:
+                self.mostrar_popup(f"Error: {str(e)}")
+            finally:
+                db.close()
 
         submit_button = Button(text="Iniciar Sesión", size_hint_y=None, height=50)
         submit_button.bind(on_press=on_submit)
@@ -119,19 +152,25 @@ class MenuApp(App):
             return
 
         layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
-        cantidad_input = TextInput()
+        cantidad_input = TextInput(input_filter='float')
         tipo_spinner = Spinner(text="Ingreso", values=["Ingreso", "Egreso"])
         categoria_spinner = Spinner(text="", values=[])
 
-    # Se cambia aquí para obtener las categorías válidas según el tipo
         def actualizar_categorias(tipo):
-            categorias_validas = Categoria.obtener_categorias_validas_por_tipo(tipo)
-            categoria_spinner.values = categorias_validas
-            categoria_spinner.text = categorias_validas[0] if categorias_validas else ""
+            db = SessionLocal()
+            try:
+                categorias_validas = db.query(Categoria).filter(Categoria.tipo == tipo).all()
+                nombres = [c.nombre for c in categorias_validas]
+                categoria_spinner.values = nombres
+                if nombres:
+                    categoria_spinner.text = nombres[0]
+                else:
+                    categoria_spinner.text = ""
+            finally:
+                db.close()
 
-    # Llamar a la función para actualizar las categorías según el tipo por defecto
+        # Inicializar categorías al abrir el popup
         actualizar_categorias(tipo_spinner.text)
-
         tipo_spinner.bind(text=lambda instance, value: actualizar_categorias(value))
 
         layout.add_widget(Label(text="Cantidad:"))
@@ -142,37 +181,42 @@ class MenuApp(App):
         layout.add_widget(categoria_spinner)
 
         def on_submit(_):
+            db = SessionLocal()
             try:
                 cantidad = float(cantidad_input.text)
                 tipo = tipo_spinner.text
                 nombre_categoria = categoria_spinner.text
-
                 if not nombre_categoria:
                     self.mostrar_popup("Debes seleccionar una categoría.")
                     return
 
-                descripcion_categoria = f"Categoría correspondiente a un {tipo.lower()}."
+                categoria = db.query(Categoria).filter(
+                    Categoria.nombre == nombre_categoria,
+                    Categoria.tipo == tipo
+                ).first()
+                if not categoria:
+                    self.mostrar_popup("Categoría no válida.")
+                    return
 
-                categoria = Categoria(id=1, nombre=nombre_categoria, descripcion=descripcion_categoria)
-
-                transaccion = Transaccion(
-                    id=len(self.transacciones) + 1,
+                nueva_transaccion = Transaccion(
                     cantidad=cantidad,
                     fecha=datetime.now(),
                     tipo=tipo,
-                    categoria=categoria,
-                    usuario=usuario
+                    categoria_id=categoria.id,
+                    usuario_id=usuario.id
                 )
+                db.add(nueva_transaccion)
+                db.commit()
 
-                self.transacciones.append(transaccion)
                 popup.dismiss()
                 self.mostrar_popup("Transacción registrada exitosamente.")
-
-            except ValueError as ve:
-                self.mostrar_popup(f"Error de validación: {str(ve)}")
+            except ValueError:
+                self.mostrar_popup("Cantidad inválida.")
             except Exception as e:
                 self.mostrar_popup(f"Error: {str(e)}")
-        
+            finally:
+                db.close()
+
         submit_button = Button(text="Registrar", size_hint_y=None, height=50)
         submit_button.bind(on_press=on_submit)
         layout.add_widget(submit_button)
@@ -186,62 +230,83 @@ class MenuApp(App):
             self.mostrar_popup("Debes iniciar sesión para visualizar transacciones.")
             return
 
-        scroll_view = ScrollView(size_hint=(1, 1))
-        layout = BoxLayout(orientation='vertical', size_hint_y=None)
-        layout.bind(minimum_height=layout.setter('height'))
+        db = SessionLocal()
+        try:
+            transacciones = db.query(Transaccion).filter(
+                Transaccion.usuario_id == usuario.id
+            ).order_by(Transaccion.fecha.desc()).all()
 
-        for t in self.transacciones:
-            if t.usuario.id == usuario.id:
-                layout.add_widget(Label(text=t.ver_detalle()))
+            scroll_view = ScrollView(size_hint=(1, 1))
+            layout = BoxLayout(orientation='vertical', size_hint_y=None)
+            layout.bind(minimum_height=layout.setter('height'))
 
-        scroll_view.add_widget(layout)
-        popup = Popup(title="Transacciones", content=scroll_view, size_hint=(0.9, 0.9))
-        popup.open()
+            if not transacciones:
+                layout.add_widget(Label(text="No hay transacciones para mostrar."))
+            else:
+                for t in transacciones:
+                    # Accedemos a la categoría asociada para mostrar su nombre
+                    categoria_nombre = t.categoria.nombre if t.categoria else "Sin categoría"
+                    detalle = (f"ID: {t.id} | {t.tipo} | {t.cantidad} | "
+                               f"{t.fecha.strftime('%Y-%m-%d %H:%M')} | Categoría: {categoria_nombre}")
+                    layout.add_widget(Label(text=detalle, size_hint_y=None, height=30))
+
+            scroll_view.add_widget(layout)
+            popup = Popup(title="Transacciones", content=scroll_view, size_hint=(0.9, 0.9))
+            popup.open()
+        except Exception as e:
+            self.mostrar_popup(f"Error: {str(e)}")
+        finally:
+            db.close()
 
     def eliminar_transaccion(self, instance):
         usuario = Sesion.obtener_usuario_actual()
         if not usuario:
-            self.mostrar_popup("Debes iniciar sesión para eliminar transacciones.")
+            self.mostrar_popup("Debes iniciar sesión para eliminar una transacción.")
             return
 
-        layout = BoxLayout(orientation='vertical', padding=10)
-        trans_id_input = TextInput(hint_text="ID de transacción a eliminar")
-        layout.add_widget(trans_id_input)
+        layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+        id_input = TextInput(input_filter='int')
+
+        layout.add_widget(Label(text="ID de la transacción a eliminar:"))
+        layout.add_widget(id_input)
 
         def on_submit(_):
+            db = SessionLocal()
             try:
-                trans_id = int(trans_id_input.text)
-                transaccion = next((t for t in self.transacciones if t.id == trans_id and t.usuario.id == usuario.id), None)
-                if transaccion:
-                    self.transacciones.remove(transaccion)
-                    popup.dismiss()
-                    self.mostrar_popup("Transacción eliminada.")
-                else:
-                    self.mostrar_popup("Transacción no encontrada o no tienes permiso.")
+                id_eliminar = int(id_input.text)
+                transaccion = db.query(Transaccion).filter(
+                    Transaccion.id == id_eliminar,
+                    Transaccion.usuario_id == usuario.id
+                ).first()
+                if not transaccion:
+                    self.mostrar_popup("Transacción no encontrada o no pertenece al usuario.")
+                    return
+
+                db.delete(transaccion)
+                db.commit()
+                popup.dismiss()
+                self.mostrar_popup("Transacción eliminada exitosamente.")
+            except ValueError:
+                self.mostrar_popup("ID inválido.")
             except Exception as e:
                 self.mostrar_popup(f"Error: {str(e)}")
+            finally:
+                db.close()
 
         submit_button = Button(text="Eliminar", size_hint_y=None, height=50)
         submit_button.bind(on_press=on_submit)
         layout.add_widget(submit_button)
 
-        popup = Popup(title="Eliminar Transacción", content=layout, size_hint=(0.7, 0.5))
+        popup = Popup(title="Eliminar Transacción", content=layout, size_hint=(0.7, 0.6))
         popup.open()
 
     def cerrar_sesion(self, instance):
         Sesion.cerrar_sesion()
         self.actualizar_usuario_label()
-        self.mostrar_popup("Sesión cerrada correctamente.")
+        self.mostrar_popup("Sesión cerrada.")
 
-    def mostrar_popup(self, message):
-        content = BoxLayout(orientation='vertical')
-        content.add_widget(Label(text=message))
-        close_button = Button(text="Cerrar", size_hint_y=None, height=50)
-        content.add_widget(close_button)
-
-        popup = Popup(title="Información", content=content, size_hint=(0.7, 0.4))
-        close_button.bind(on_press=popup.dismiss)
+    def mostrar_popup(self, mensaje):
+        popup = Popup(title="Información", content=Label(text=mensaje), size_hint=(0.7, 0.5))
+       
         popup.open()
 
-if __name__ == "__main__":
-    MenuApp().run()
